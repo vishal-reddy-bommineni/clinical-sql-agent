@@ -1,78 +1,69 @@
-# Run guide (Windows PowerShell)
+# Run guide
 
-## 1. One-time setup
+Commands are shown for Windows PowerShell; on macOS/Linux use `source .venv/bin/activate` and `cp`
+instead of `.venv\Scripts\Activate.ps1` and `Copy-Item`.
+
+## 1. Setup
 ```powershell
-cd "C:\Users\vineel reddy\Downloads\clinical-sql-agent"
+git clone https://github.com/vishal-reddy-bommineni/clinical-sql-agent.git
+cd clinical-sql-agent
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 Copy-Item .env.example .env
 notepad .env
 ```
-In Notepad, replace `paste-your-key-here` with your Gemini key (no quotes, no spaces), save, close.
-The dataset is already in `data/raw/`; the database builds itself on first use.
+In `.env`, replace `paste-your-key-here` with a Gemini API key from Google AI Studio (no quotes, no
+spaces) and save. The dataset is already in `data/raw/`; the database builds itself on first use.
 
-## 2. Check the tests pass (no API key used)
+## 2. Tests and data checks (no API key needed)
 ```powershell
-python -m pytest -q
+python -m pytest -q                 # 43 tests, including a mock Gemini server
+python -m scripts.profile_data      # data-profiling queries -> reports/profiling.md
+python -m src.evaluation.gold       # answer key -> reports/gold_answers.md
 ```
-Expect `41 passed`.
 
-## 3. Check your key and model
+## 3. Check the key and model
 ```powershell
 python -m scripts.check_llm
 ```
-It lists the Gemini models your key can use, sends one message and tests a tool call.
-- If it says your `GEMINI_MODEL` is not in the list, open `.env` and set `GEMINI_MODEL=` to one of the
-  listed **flash** models, then run the check again.
-- If it says the model answered without calling the tool, pick another flash model.
-- If you get 429 errors, lower `LLM_REQUESTS_PER_MINUTE` in `.env` (e.g. to 5).
+Lists the Gemini models the key can use, sends one message and tests a tool call.
+- If `GEMINI_MODEL` is not in the list, set it in `.env` to one of the listed Flash models.
+- If the model answers without calling the tool, choose another Flash model.
+- On 429 errors, lower `LLM_REQUESTS_PER_MINUTE` in `.env`.
 
-## 4. Quick evaluation test (3 questions, about 25 requests)
+Free-tier limits differ by model (see Usage / Rate limits in Google AI Studio). The full evaluation
+needs about 350 requests; the published results used `gemini-3.5-flash-lite` (500 requests/day).
+
+## 4. Evaluation
 ```powershell
-python -m src.evaluation.run_eval --ids q01 q23 q45 --run-name smoke
+python -m src.evaluation.run_eval --ids q01 q23 q45 --run-name smoke   # quick trial
+python -m src.evaluation.run_eval                                      # all 50 questions x 3 approaches
 ```
-You should see lines like `[1/9] OK q01 baseline_schema ...`. Any `ERR` with "LLM error" means a
-key/model problem; paste the output to Claude.
+- Every finished answer is saved immediately to `reports/runs/<model>/results.jsonl`.
+- If the daily quota runs out, run the same command after it resets (midnight Pacific time); it
+  continues where it stopped.
+- At the end it writes `reports/RESULTS.md` and the charts in `reports/figures/`.
 
-## 5. Full evaluation (about 350 requests)
+Other evaluation commands:
 ```powershell
-python -m src.evaluation.run_eval
+python -m src.evaluation.report                      # rebuild RESULTS.md and charts
+python -m src.evaluation.rescore                     # re-score saved answers after fixing the answer key
+python -m src.evaluation.run_eval --ids q36 --redo   # rerun chosen questions
 ```
-- Each finished question is saved immediately to `reports/runs/<model>/results.jsonl`.
-- If it stops with "daily quota reached", run **the same command** again after the quota resets
-  (midnight Pacific time). It continues where it stopped.
-- When everything is done it writes `reports/RESULTS.md` and two charts in `reports/figures/`.
 
-Then send Claude `reports/RESULTS.md` and `reports/runs/<model>/results.jsonl` to write the README
-results, analysis and resume bullets.
-
-## 6. The app
+## 5. App
 ```powershell
 streamlit run app.py
 ```
-Opens in your browser. Tabs: **Ask** (type a question or click an example), **Evaluation**
-(your results), **Data guide** (every table explained). Stop with Ctrl+C.
+Tabs: **Ask** (type a question or click an example), **Evaluation**, **Data guide**. Stop with Ctrl+C.
 
-## 7. GitHub
-Create an empty repo `clinical-sql-agent` (no README), then:
-```powershell
-git init
-git add .
-git commit -m "Clinical SQL agent on MIMIC-IV demo with 50-question evaluation"
-git branch -M main
-git remote add origin https://github.com/vishal-reddy-bommineni/clinical-sql-agent.git
-git push -u origin main
-```
-`.env` (your key) and the built database are in `.gitignore` and will not be uploaded.
-
-## 8. Deploy on Streamlit Community Cloud
-share.streamlit.io -> Create app -> your repo, branch `main`, main file `app.py`.
-Advanced settings -> Python 3.13, and in **Secrets** paste:
+## 6. Deploy on Streamlit Community Cloud
+share.streamlit.io -> Create app -> this repository, branch `main`, main file `app.py`.
+Under Advanced settings choose Python 3.13 and add to **Secrets**:
 ```toml
 GEMINI_API_KEY = "your-key"
-GEMINI_MODEL = "the-model-that-worked-in-step-3"
-LLM_REQUESTS_PER_MINUTE = "8"
+GEMINI_MODEL = "gemini-3.5-flash-lite"
+LLM_REQUESTS_PER_MINUTE = "12"
 ```
-Deploy, then put the app URL in the README badge and in the repo's About -> Website.
-Anyone using your public app spends your free quota; that's fine for a portfolio demo.
+Visitors to a public app use the key's free quota.

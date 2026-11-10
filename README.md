@@ -4,9 +4,6 @@ Ask questions about hospital data in plain English. An LLM agent explores a 31-t
 database, writes read-only SQL, runs it, fixes its own mistakes and answers, and a 50-question
 benchmark measures how often it is actually right.
 
-<!-- After deploying, replace the link below with your Streamlit URL -->
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io)
-
 > **Results** (50 questions, Gemini 3.5 Flash Lite): the agent answered **49/50 correctly (98%)**,
 > vs **94%** when the model is given the documented schema in one shot and **84%** with the raw schema
 > only. Most of the gain comes from documenting the data; the agent adds the rest at ~3.7x the model calls.
@@ -44,7 +41,8 @@ de-identified records of 100 patients at Beth Israel Deaconess Medical Center: 2
 140 ICU stays, 107k lab results, 669k ICU charted measurements, 18k prescriptions. ODbL license,
 included in `data/raw/` unchanged. See `data/README.md` for citations.
 
-The data is full of the traps that break naive text-to-SQL, found while profiling it:
+The data is full of the traps that break naive text-to-SQL. They were found with the profiling queries in
+`sql/profiling.sql` (results: `reports/profiling.md`):
 
 | Trap | Why naive SQL gets it wrong |
 |---|---|
@@ -165,10 +163,11 @@ cp .env.example .env                 # then paste your API key into .env
 python -m scripts.check_llm          # checks key, model, tool calling
 python -m src.evaluation.run_eval    # 50 questions x 3 approaches (resumable)
 streamlit run app.py                 # the app
-python -m pytest -q                  # 42 tests, no API key needed
+python -m pytest -q                  # 43 tests, no API key needed
+python -m scripts.profile_data       # data-profiling SQL -> reports/profiling.md
 ```
 Works with Gemini (default, free tier) or any OpenAI-compatible API (Groq, OpenAI, Ollama...)
-by changing `LLM_PROVIDER` in `.env`.
+by changing `LLM_PROVIDER` in `.env`. Step-by-step instructions: `docs/RUN_GUIDE.md`.
 
 ## Repo map
 ```
@@ -178,9 +177,10 @@ src/db.py                  SQL guard + read-only execution with timeout
 src/llm/                   Gemini native client, OpenAI-compatible client, shared types
 src/agent/                 prompts, tools, baselines and agent loop
 src/evaluation/            questions + gold SQL, scoring, runner, report, rescore
-scripts/check_llm.py       verifies your key and model
-tests/                     42 tests incl. a mock Gemini server
-reports/                   RESULTS.md, gold_answers.md, figures, raw run logs
+sql/profiling.sql          profiling queries that uncovered the data traps
+scripts/                   check_llm (verify key and model), profile_data
+tests/                     43 tests incl. a mock Gemini server
+reports/                   RESULTS.md, gold_answers.md, profiling.md, figures, raw run logs
 data/raw/                  MIMIC-IV demo files (ODbL)
 ```
 

@@ -127,3 +127,13 @@ def test_clean_sql_drops_language_line():
     # run 1 found a model reply "```\nsql\nSELECT ...```" that was wrongly rejected
     assert run_query("sql\nSELECT MEDIAN(los) AS m FROM icustays").ok
     assert run_query("```sql\nSELECT 1;\n```").ok
+
+
+def test_profiling_queries_run():
+    from scripts.profile_data import SQL_PATH
+    chunks = SQL_PATH.read_text().split("-- name:")[1:]
+    assert len(chunks) >= 10
+    for chunk in chunks:
+        title, query = chunk.split("\n", 1)
+        r = run_query(query)
+        assert r.ok and len(r.df) > 0, title

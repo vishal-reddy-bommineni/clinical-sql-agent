@@ -20,8 +20,10 @@ from src.evaluation.compare import results_match
 
 def rescore(run_name=None):
     if run_name is None:
-        runs = sorted(RUNS_DIR.glob("*/results.jsonl"), key=lambda p: p.stat().st_mtime)
-        run_name = runs[-1].parent.name
+        from src.evaluation.report import pick_run
+        run_name = pick_run()
+        if run_name is None:
+            raise SystemExit("No runs to rescore.")
     path = RUNS_DIR / run_name / "results.jsonl"
     backup = path.with_name("results.before_rescore.jsonl")
     if not backup.exists():

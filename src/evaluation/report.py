@@ -1,6 +1,6 @@
 """Build reports/RESULTS.md, summary CSVs and figures from one or more evaluation runs.
 
-Usage:  python -m src.evaluation.report                 # latest run
+Usage:  python -m src.evaluation.report                 # run for the model in .env
         python -m src.evaluation.report --run <name>
 """
 import argparse
@@ -56,13 +56,25 @@ def outcome(r):
     return "wrong result"
 
 
+def pick_run() -> str | None:
+    """Default run: the one for the model set in .env if it exists, otherwise the run with the
+    most answers (so a small trial run is never picked by accident)."""
+    runs = list(RUNS_DIR.glob("*/results.jsonl"))
+    if not runs:
+        return None
+    from src.evaluation.run_eval import default_run_name
+    names = {r.parent.name for r in runs}
+    if default_run_name() in names:
+        return default_run_name()
+    return max(runs, key=lambda r: sum(1 for _ in r.open())).parent.name
+
+
 def build_report(run_name=None):
     if run_name is None:
-        runs = sorted(RUNS_DIR.glob("*/results.jsonl"), key=lambda p: p.stat().st_mtime)
-        if not runs:
+        run_name = pick_run()
+        if run_name is None:
             print("No runs yet.")
             return
-        run_name = runs[-1].parent.name
     df = load_run(run_name)
     df["outcome"] = df.apply(outcome, axis=1)
     configs = [c for c in CONFIGS if c in set(df["config"])]
