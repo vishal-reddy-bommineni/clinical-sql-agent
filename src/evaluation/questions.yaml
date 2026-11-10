@@ -1,0 +1,446 @@
+# Evaluation set: business questions about the MIMIC-IV demo with hand-written "gold" SQL.
+# Every gold query was run against the database and its result checked (reports/gold_answers.md).
+#
+# Fields
+#   id          unique id
+#   category    lookup | aggregation | dictionary | clinical_logic | multi_step
+#   difficulty  easy | medium | hard
+#   question    what a user would type (precise enough to have one correct answer)
+#   gold_sql    reference query
+#   order_matters  true when the question asks for a ranking/order to be compared row by row
+#   trap        (optional) the mistake this question is designed to catch
+#   revised     (optional) what changed after a run, and why (see README: benchmark revisions)
+
+questions:
+# ---------------------------------------------------------------- easy: one table
+- id: q01
+  category: lookup
+  difficulty: easy
+  question: How many patients are in the database?
+  gold_sql: SELECT COUNT(DISTINCT subject_id) AS patients FROM patients
+
+- id: q02
+  category: lookup
+  difficulty: easy
+  question: How many hospital admissions are there in total?
+  gold_sql: SELECT COUNT(*) AS admissions FROM admissions
+
+- id: q03
+  category: aggregation
+  difficulty: easy
+  question: How many patients are female and how many are male?
+  gold_sql: SELECT gender, COUNT(*) AS patients FROM patients GROUP BY gender
+
+- id: q04
+  category: aggregation
+  difficulty: easy
+  question: How many patients have a recorded date of death?
+  gold_sql: SELECT COUNT(*) AS patients_died FROM patients WHERE dod IS NOT NULL
+
+- id: q05
+  category: aggregation
+  difficulty: easy
+  question: How many hospital admissions ended with the patient dying in the hospital?
+  gold_sql: SELECT SUM(hospital_expire_flag) AS in_hospital_deaths FROM admissions
+
+- id: q06
+  category: aggregation
+  difficulty: easy
+  question: How many admissions are there for each insurance type?
+  gold_sql: SELECT insurance, COUNT(*) AS admissions FROM admissions GROUP BY insurance
+
+- id: q07
+  category: aggregation
+  difficulty: easy
+  question: What are the 3 most common admission locations, with the number of admissions for each?
+  gold_sql: |
+    SELECT admission_location, COUNT(*) AS admissions
+    FROM admissions GROUP BY admission_location ORDER BY admissions DESC LIMIT 3
+  order_matters: true
+
+- id: q08
+  category: lookup
+  difficulty: easy
+  question: How many ICU stays are there?
+  gold_sql: SELECT COUNT(*) AS icu_stays FROM icustays
+
+- id: q09
+  category: aggregation
+  difficulty: easy
+  question: What is the average ICU length of stay in days, by first care unit? Sort from longest to shortest.
+  gold_sql: |
+    SELECT first_careunit, ROUND(AVG(los), 2) AS avg_icu_los_days
+    FROM icustays GROUP BY first_careunit ORDER BY avg_icu_los_days DESC
+  order_matters: true
+
+- id: q10
+  category: aggregation
+  difficulty: easy
+  question: What is the average anchor age of the patients, rounded to one decimal?
+  gold_sql: SELECT ROUND(AVG(anchor_age), 1) AS avg_anchor_age FROM patients
+
+- id: q11
+  category: aggregation
+  difficulty: easy
+  question: How many patients are in each anchor year group?
+  gold_sql: SELECT anchor_year_group, COUNT(*) AS patients FROM patients GROUP BY anchor_year_group
+
+- id: q12
+  category: aggregation
+  difficulty: easy
+  question: How many lab results were flagged as abnormal?
+  gold_sql: SELECT COUNT(*) AS abnormal_results FROM labevents WHERE flag = 'abnormal'
+
+# ---------------------------------------------------------------- medium: one table, some logic
+- id: q13
+  category: aggregation
+  difficulty: medium
+  question: What is the average hospital length of stay in days, rounded to two decimals?
+  gold_sql: SELECT ROUND(AVG(epoch(dischtime - admittime) / 86400.0), 2) AS avg_los_days FROM admissions
+  trap: Needs fractional days from timestamps; date_diff('day') truncates.
+
+- id: q14
+  category: aggregation
+  difficulty: medium
+  question: How many patients had more than one hospital admission?
+  gold_sql: |
+    SELECT COUNT(*) AS patients FROM (
+      SELECT subject_id FROM admissions GROUP BY subject_id HAVING COUNT(*) > 1)
+
+- id: q15
+  category: aggregation
+  difficulty: medium
+  question: Which patient has the most hospital admissions, and how many?
+  gold_sql: |
+    SELECT subject_id, COUNT(*) AS admissions FROM admissions
+    GROUP BY subject_id ORDER BY admissions DESC LIMIT 1
+
+- id: q16
+  category: aggregation
+  difficulty: medium
+  question: What percentage of admissions were emergency admissions (admission type 'EW EMER.' or 'DIRECT EMER.')? Round to one decimal.
+  gold_sql: |
+    SELECT ROUND(100.0 * AVG(CASE WHEN admission_type IN ('EW EMER.', 'DIRECT EMER.') THEN 1 ELSE 0 END), 1) AS pct_emergency
+    FROM admissions
+
+- id: q17
+  category: aggregation
+  difficulty: medium
+  question: What is the in-hospital mortality rate (percentage of admissions where the patient died) for each insurance type? Round to one decimal.
+  gold_sql: |
+    SELECT insurance, ROUND(100.0 * AVG(hospital_expire_flag), 1) AS mortality_pct
+    FROM admissions GROUP BY insurance
+
+- id: q18
+  category: aggregation
+  difficulty: medium
+  question: What is the median ICU length of stay in days, rounded to two decimals?
+  gold_sql: SELECT ROUND(MEDIAN(los), 2) AS median_icu_los_days FROM icustays
+
+- id: q19
+  category: aggregation
+  difficulty: medium
+  question: For admissions that came through the emergency department (with an ED registration time), what is the average time spent in the ED in hours, rounded to one decimal?
+  gold_sql: |
+    SELECT ROUND(AVG(epoch(edouttime - edregtime) / 3600.0), 1) AS avg_ed_hours
+    FROM admissions WHERE edregtime IS NOT NULL
+
+- id: q20
+  category: aggregation
+  difficulty: medium
+  question: How many patients were older than 80 at their anchor age?
+  gold_sql: SELECT COUNT(*) AS patients FROM patients WHERE anchor_age > 80
+
+- id: q21
+  category: aggregation
+  difficulty: medium
+  question: How many distinct drug names appear in the prescriptions table?
+  gold_sql: SELECT COUNT(DISTINCT drug) AS distinct_drugs FROM prescriptions
+
+- id: q22
+  category: aggregation
+  difficulty: medium
+  question: What are the 3 drugs prescribed to the largest number of different patients, with the patient count for each?
+  gold_sql: |
+    SELECT drug, COUNT(DISTINCT subject_id) AS patients FROM prescriptions
+    GROUP BY drug ORDER BY patients DESC LIMIT 3
+  order_matters: true
+  trap: Must count distinct patients, not prescription rows.
+
+# ---------------------------------------------------------------- dictionary lookups (codes -> names)
+- id: q23
+  category: dictionary
+  difficulty: medium
+  question: What are the 5 most common diagnoses by number of admissions? Give the diagnosis description and the count.
+  gold_sql: |
+    SELECT x.long_title, COUNT(DISTINCT d.hadm_id) AS admissions
+    FROM diagnoses_icd d JOIN d_icd_diagnoses x ON d.icd_code = x.icd_code AND d.icd_version = x.icd_version
+    GROUP BY x.long_title ORDER BY admissions DESC LIMIT 5
+  order_matters: true
+  trap: Join on icd_code AND icd_version.
+
+- id: q24
+  category: dictionary
+  difficulty: medium
+  question: What are the 2 most common primary diagnoses (the diagnosis listed first for an admission)? Give the description and number of admissions.
+  gold_sql: |
+    SELECT x.long_title, COUNT(*) AS admissions
+    FROM diagnoses_icd d JOIN d_icd_diagnoses x ON d.icd_code = x.icd_code AND d.icd_version = x.icd_version
+    WHERE d.seq_num = 1 GROUP BY x.long_title ORDER BY admissions DESC, x.long_title LIMIT 2
+  order_matters: false
+  trap: Primary diagnosis is seq_num = 1. The top 2 are tied (7 each), so order is not compared; ranks 3-6 are tied, so the question stops at 2.
+
+- id: q25
+  category: dictionary
+  difficulty: medium
+  question: What are the 3 most common ICD procedures by number of admissions? Give the procedure description and the count.
+  gold_sql: |
+    SELECT x.long_title, COUNT(DISTINCT p.hadm_id) AS admissions
+    FROM procedures_icd p JOIN d_icd_procedures x ON p.icd_code = x.icd_code AND p.icd_version = x.icd_version
+    GROUP BY x.long_title ORDER BY admissions DESC LIMIT 3
+  order_matters: true
+
+- id: q26
+  category: dictionary
+  difficulty: medium
+  question: Which 5 lab tests (by test name) were performed most often, and how many times each?
+  gold_sql: |
+    SELECT d.label, COUNT(*) AS results
+    FROM labevents l JOIN d_labitems d ON l.itemid = d.itemid
+    GROUP BY d.label ORDER BY results DESC LIMIT 5
+  order_matters: true
+
+- id: q27
+  category: dictionary
+  difficulty: medium
+  question: What is the average blood creatinine result in mg/dL, rounded to two decimals?
+  gold_sql: |
+    SELECT ROUND(AVG(l.valuenum), 2) AS avg_creatinine
+    FROM labevents l JOIN d_labitems d ON l.itemid = d.itemid
+    WHERE d.label = 'Creatinine' AND d.fluid = 'Blood'
+
+- id: q28
+  category: dictionary
+  difficulty: medium
+  question: What is the average ICU heart rate across all charted measurements, rounded to one decimal?
+  gold_sql: |
+    SELECT ROUND(AVG(c.valuenum), 1) AS avg_heart_rate
+    FROM chartevents c JOIN d_items d ON c.itemid = d.itemid
+    WHERE d.label = 'Heart Rate'
+
+- id: q29
+  category: dictionary
+  difficulty: medium
+  question: What percentage of blood potassium results were flagged abnormal? Round to one decimal.
+  gold_sql: |
+    SELECT ROUND(100.0 * AVG(CASE WHEN l.flag = 'abnormal' THEN 1 ELSE 0 END), 1) AS pct_abnormal
+    FROM labevents l JOIN d_labitems d ON l.itemid = d.itemid
+    WHERE d.label ILIKE '%potassium%' AND d.fluid = 'Blood'
+  trap: Two blood potassium tests exist (chemistry and whole blood); urine potassium must be excluded.
+  revised: "After run 1: gold widened to include whole-blood potassium, which the question's wording covers."
+
+- id: q30
+  category: dictionary
+  difficulty: medium
+  question: How many patients had at least one hemoglobin A1c test, and what was the average result (rounded to two decimals)?
+  gold_sql: |
+    SELECT COUNT(DISTINCT l.subject_id) AS patients, ROUND(AVG(l.valuenum), 2) AS avg_a1c
+    FROM labevents l JOIN d_labitems d ON l.itemid = d.itemid
+    WHERE d.label = '% Hemoglobin A1c'
+
+# ---------------------------------------------------------------- clinical logic (domain knowledge / traps)
+- id: q31
+  category: clinical_logic
+  difficulty: medium
+  question: How many patients had any diagnosis whose description mentions sepsis?
+  gold_sql: |
+    SELECT COUNT(DISTINCT d.subject_id) AS patients
+    FROM diagnoses_icd d JOIN d_icd_diagnoses x ON d.icd_code = x.icd_code AND d.icd_version = x.icd_version
+    WHERE x.long_title ILIKE '%sepsis%'
+  trap: Must search descriptions across ICD-9 and ICD-10; count distinct patients.
+
+- id: q32
+  category: clinical_logic
+  difficulty: medium
+  question: How many admissions had a heart failure diagnosis (any diagnosis whose description contains 'heart failure')?
+  gold_sql: |
+    SELECT COUNT(DISTINCT d.hadm_id) AS admissions
+    FROM diagnoses_icd d JOIN d_icd_diagnoses x ON d.icd_code = x.icd_code AND d.icd_version = x.icd_version
+    WHERE x.long_title ILIKE '%heart failure%'
+
+- id: q33
+  category: clinical_logic
+  difficulty: medium
+  question: How many different patients were prescribed any insulin product?
+  gold_sql: SELECT COUNT(DISTINCT subject_id) AS patients FROM prescriptions WHERE drug ILIKE '%insulin%'
+  trap: Drug names vary ('Insulin', 'Insulin Human Regular', ...); count distinct patients.
+
+- id: q34
+  category: clinical_logic
+  difficulty: medium
+  question: How many ICU stays included invasive ventilation?
+  gold_sql: |
+    SELECT COUNT(DISTINCT p.stay_id) AS icu_stays
+    FROM procedureevents p JOIN d_items d ON p.itemid = d.itemid
+    WHERE d.label = 'Invasive Ventilation'
+
+- id: q35
+  category: clinical_logic
+  difficulty: medium
+  question: How many admissions are there at each APR DRG severity level?
+  gold_sql: |
+    SELECT drg_severity, COUNT(DISTINCT hadm_id) AS admissions
+    FROM drgcodes WHERE drg_type = 'APR' GROUP BY drg_severity
+  trap: drgcodes has HCFA and APR rows; must filter to APR.
+
+- id: q36
+  category: clinical_logic
+  difficulty: hard
+  question: For E. coli, how many ciprofloxacin susceptibility results were resistant (R) and how many were sensitive (S)? Return one row per interpretation with its count.
+  revised: "After run 1: output shape stated; a correct two-column answer had been scored wrong."
+  gold_sql: |
+    SELECT interpretation, COUNT(*) AS results FROM microbiologyevents
+    WHERE org_name = 'ESCHERICHIA COLI' AND ab_name = 'CIPROFLOXACIN' AND interpretation IN ('R', 'S')
+    GROUP BY interpretation
+
+- id: q37
+  category: clinical_logic
+  difficulty: hard
+  question: Which organism was found in the most distinct urine culture specimens, and in how many?
+  gold_sql: |
+    SELECT org_name, COUNT(DISTINCT micro_specimen_id) AS specimens FROM microbiologyevents
+    WHERE spec_type_desc = 'URINE' AND org_name IS NOT NULL AND org_name <> 'CANCELLED'
+    GROUP BY org_name ORDER BY specimens DESC LIMIT 1
+  trap: One specimen has many antibiotic rows; count distinct specimens. 'CANCELLED' is not an organism.
+
+- id: q38
+  category: clinical_logic
+  difficulty: hard
+  question: What is the average age at admission (using anchor age and anchor year) across all admissions, rounded to one decimal?
+  gold_sql: |
+    SELECT ROUND(AVG(p.anchor_age + year(a.admittime) - p.anchor_year), 1) AS avg_age_at_admission
+    FROM admissions a JOIN patients p ON a.subject_id = p.subject_id
+  trap: Age at admission must be derived from anchor_age and anchor_year.
+
+- id: q39
+  category: clinical_logic
+  difficulty: medium
+  question: What is the average BMI recorded in the outpatient measurements, rounded to one decimal?
+  gold_sql: |
+    SELECT ROUND(AVG(TRY_CAST(result_value AS DOUBLE)), 1) AS avg_bmi
+    FROM omr WHERE result_name = 'BMI (kg/m2)'
+  trap: result_value is text.
+
+- id: q40
+  category: clinical_logic
+  difficulty: hard
+  question: What was the highest blood lactate value recorded, and for which patient?
+  gold_sql: |
+    SELECT l.subject_id, l.valuenum AS max_lactate
+    FROM labevents l JOIN d_labitems d ON l.itemid = d.itemid
+    WHERE d.label = 'Lactate' AND d.fluid = 'Blood' AND l.valuenum IS NOT NULL
+    ORDER BY l.valuenum DESC LIMIT 1
+
+# ---------------------------------------------------------------- multi-step: several joins / subqueries
+- id: q41
+  category: multi_step
+  difficulty: hard
+  question: What percentage of ICU stays belonged to an admission in which the patient died in hospital? Round to one decimal.
+  gold_sql: |
+    SELECT ROUND(100.0 * AVG(a.hospital_expire_flag), 1) AS pct_icu_stays_died
+    FROM icustays i JOIN admissions a ON i.hadm_id = a.hadm_id
+
+- id: q42
+  category: multi_step
+  difficulty: hard
+  question: What is the average ICU heart rate for each first care unit, rounded to one decimal, sorted from highest to lowest?
+  gold_sql: |
+    SELECT i.first_careunit, ROUND(AVG(c.valuenum), 1) AS avg_heart_rate
+    FROM chartevents c JOIN icustays i ON c.stay_id = i.stay_id
+    WHERE c.itemid = 220045
+    GROUP BY i.first_careunit ORDER BY avg_heart_rate DESC
+  order_matters: true
+
+- id: q43
+  category: multi_step
+  difficulty: hard
+  question: How many patients had both a diabetes diagnosis and a heart failure diagnosis (based on diagnosis descriptions containing 'diabetes' and 'heart failure'), at any time?
+  gold_sql: |
+    WITH dx AS (
+      SELECT d.subject_id, x.long_title
+      FROM diagnoses_icd d JOIN d_icd_diagnoses x ON d.icd_code = x.icd_code AND d.icd_version = x.icd_version)
+    SELECT COUNT(*) AS patients FROM (
+      SELECT subject_id FROM dx GROUP BY subject_id
+      HAVING SUM(CASE WHEN long_title ILIKE '%diabetes%' THEN 1 ELSE 0 END) > 0
+         AND SUM(CASE WHEN long_title ILIKE '%heart failure%' THEN 1 ELSE 0 END) > 0)
+
+- id: q44
+  category: multi_step
+  difficulty: hard
+  question: Compare the average hospital length of stay in days (rounded to two decimals) for admissions with a sepsis diagnosis versus admissions without one. Return a column has_sepsis with values 'yes' and 'no', and the average.
+  revised: "After run 1: group labels stated; correct numbers had been scored wrong because of label wording."
+  gold_sql: |
+    WITH sepsis AS (
+      SELECT DISTINCT d.hadm_id
+      FROM diagnoses_icd d JOIN d_icd_diagnoses x ON d.icd_code = x.icd_code AND d.icd_version = x.icd_version
+      WHERE x.long_title ILIKE '%sepsis%')
+    SELECT CASE WHEN s.hadm_id IS NOT NULL THEN 'yes' ELSE 'no' END AS has_sepsis,
+           ROUND(AVG(epoch(a.dischtime - a.admittime) / 86400.0), 2) AS avg_los_days
+    FROM admissions a LEFT JOIN sepsis s ON a.hadm_id = s.hadm_id
+    GROUP BY 1
+
+- id: q45
+  category: multi_step
+  difficulty: hard
+  question: How many hospital admissions were followed by another admission of the same patient within 30 days of discharge?
+  gold_sql: |
+    WITH ordered AS (
+      SELECT subject_id, hadm_id, dischtime,
+             LEAD(admittime) OVER (PARTITION BY subject_id ORDER BY admittime) AS next_admit
+      FROM admissions)
+    SELECT COUNT(*) AS admissions_readmitted_30d FROM ordered
+    WHERE next_admit IS NOT NULL AND next_admit <= dischtime + INTERVAL 30 DAY
+  trap: Needs a window function or self-join over each patient's admissions.
+
+- id: q46
+  category: multi_step
+  difficulty: hard
+  question: What is the in-hospital mortality rate (percentage of admissions) for men and for women, rounded to one decimal?
+  gold_sql: |
+    SELECT p.gender, ROUND(100.0 * AVG(a.hospital_expire_flag), 1) AS mortality_pct
+    FROM admissions a JOIN patients p ON a.subject_id = p.subject_id GROUP BY p.gender
+
+- id: q47
+  category: multi_step
+  difficulty: hard
+  question: What is the average number of distinct diagnoses per admission, rounded to two decimals?
+  gold_sql: |
+    SELECT ROUND(AVG(n), 2) AS avg_diagnoses FROM (
+      SELECT a.hadm_id, COUNT(DISTINCT d.icd_code || '-' || d.icd_version) AS n
+      FROM admissions a LEFT JOIN diagnoses_icd d ON a.hadm_id = d.hadm_id GROUP BY a.hadm_id)
+
+- id: q48
+  category: multi_step
+  difficulty: hard
+  question: What is the average number of distinct drugs prescribed per admission, among admissions that had at least one prescription? Round to one decimal.
+  gold_sql: |
+    SELECT ROUND(AVG(n), 1) AS avg_distinct_drugs FROM (
+      SELECT hadm_id, COUNT(DISTINCT drug) AS n FROM prescriptions GROUP BY hadm_id)
+
+- id: q49
+  category: multi_step
+  difficulty: hard
+  question: For the 3 races with the most admissions (using the race value exactly as recorded), what is the average hospital length of stay in days? Round to two decimals.
+  gold_sql: |
+    WITH top_race AS (
+      SELECT race FROM admissions GROUP BY race ORDER BY COUNT(*) DESC LIMIT 3)
+    SELECT a.race, ROUND(AVG(epoch(a.dischtime - a.admittime) / 86400.0), 2) AS avg_los_days
+    FROM admissions a JOIN top_race t ON a.race = t.race GROUP BY a.race
+
+- id: q50
+  category: multi_step
+  difficulty: hard
+  question: Among patients who had at least one ICU stay, how many had more than one ICU stay?
+  gold_sql: |
+    SELECT COUNT(*) AS patients FROM (
+      SELECT subject_id FROM icustays GROUP BY subject_id HAVING COUNT(*) > 1)

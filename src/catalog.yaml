@@ -1,0 +1,294 @@
+# Semantic catalog for the MIMIC-IV Clinical Database Demo (v2.2), loaded into DuckDB.
+# This is the "data dictionary" the agent reads. It explains what tables mean, how they join,
+# and the traps that make naive SQL wrong. Written from the MIMIC-IV documentation and from
+# profiling this database (see reports/table_row_counts.csv).
+
+database_notes:
+  - "De-identified records for 100 patients (hosp module: hospital-wide data; icu module: ICU data)."
+  - "SQL dialect is DuckDB. Use date_diff('day', a, b), epoch(b - a)/86400.0 for fractional days, year(ts), ILIKE for case-insensitive match."
+  - "All dates are shifted into the future (years 2110-2201) to protect privacy. Durations and order are correct; calendar years are not real."
+  - "Key IDs: subject_id = patient, hadm_id = hospital admission, stay_id = ICU stay. One patient has many admissions; one admission can have zero or more ICU stays."
+  - "'Patients' means distinct subject_id; 'admissions' or 'hospitalizations' means distinct hadm_id; 'ICU stays' means distinct stay_id."
+  - "Text categories are mostly UPPERCASE in admissions (e.g. 'EW EMER.', 'Medicare', 'WHITE'); check values with a quick SELECT DISTINCT when unsure."
+
+tables:
+  patients:
+    description: "One row per patient (100 rows)."
+    columns:
+      subject_id: "Patient ID (primary key)."
+      gender: "'F' or 'M'."
+      anchor_age: "Patient age in years in their anchor_year (NOT age at each admission). Ages over 89 are recorded as 91."
+      anchor_year: "Shifted year that anchor_age refers to. Age at an admission = anchor_age + (year(admittime) - anchor_year)."
+      anchor_year_group: "Real 3-year window the anchor year maps to, e.g. '2011 - 2013'."
+      dod: "Date of death (from hospital or state records). NULL if no recorded death. Includes deaths after discharge."
+
+  admissions:
+    description: "One row per hospital admission (275 rows)."
+    columns:
+      subject_id: "Patient ID."
+      hadm_id: "Admission ID (primary key)."
+      admittime: "Admission timestamp."
+      dischtime: "Discharge timestamp. Length of stay in days = epoch(dischtime - admittime)/86400.0."
+      deathtime: "Time of in-hospital death, else NULL."
+      admission_type: "Values: 'EW EMER.', 'OBSERVATION ADMIT', 'URGENT', 'EU OBSERVATION', 'SURGICAL SAME DAY ADMISSION', 'DIRECT EMER.', 'ELECTIVE', 'DIRECT OBSERVATION', 'AMBULATORY OBSERVATION'. Emergency admissions are 'EW EMER.' and 'DIRECT EMER.'."
+      admission_location: "Where the patient came from, e.g. 'EMERGENCY ROOM', 'PHYSICIAN REFERRAL', 'TRANSFER FROM HOSPITAL'."
+      discharge_location: "Where the patient went, e.g. 'HOME', 'HOME HEALTH CARE', 'SKILLED NURSING FACILITY', 'DIED', 'REHAB', 'HOSPICE'. Can be NULL."
+      insurance: "'Medicare', 'Medicaid' or 'Other'."
+      language: "'ENGLISH' or '?' (unknown)."
+      marital_status: "'SINGLE', 'MARRIED', 'WIDOWED', 'DIVORCED' or NULL."
+      race: "Detailed text, e.g. 'WHITE', 'BLACK/AFRICAN AMERICAN', 'HISPANIC/LATINO - CUBAN', 'UNKNOWN'. Group with LIKE 'WHITE%' etc. if asked for broad groups."
+      edregtime: "Emergency department registration time (NULL if not via ED)."
+      edouttime: "Emergency department departure time."
+      hospital_expire_flag: "1 if the patient died during this admission, else 0. Use for in-hospital mortality."
+
+  icustays:
+    description: "One row per ICU stay (140 rows)."
+    columns:
+      subject_id: "Patient ID."
+      hadm_id: "Admission the ICU stay belongs to."
+      stay_id: "ICU stay ID (primary key)."
+      first_careunit: "First ICU unit, e.g. 'Medical Intensive Care Unit (MICU)', 'Surgical Intensive Care Unit (SICU)', 'Cardiac Vascular Intensive Care Unit (CVICU)', 'Coronary Care Unit (CCU)', 'Trauma SICU (TSICU)'."
+      last_careunit: "Last ICU unit during the stay."
+      intime: "ICU admission time."
+      outtime: "ICU discharge time."
+      los: "ICU length of stay in fractional days (already computed)."
+
+  diagnoses_icd:
+    description: "Billed diagnoses per admission (ICD-9 and ICD-10 mixed). One row per diagnosis per admission."
+    columns:
+      subject_id: "Patient ID."
+      hadm_id: "Admission ID."
+      seq_num: "Priority of the diagnosis; seq_num = 1 is the primary diagnosis."
+      icd_code: "ICD code WITHOUT dots, as text (e.g. '4280', 'I509')."
+      icd_version: "9 or 10."
+    gotchas:
+      - "To get the diagnosis name, JOIN d_icd_diagnoses ON BOTH icd_code AND icd_version. Joining on icd_code alone matches wrong diagnoses."
+      - "To find a condition by name, filter d_icd_diagnoses.long_title with ILIKE (e.g. '%sepsis%') so both ICD-9 and ICD-10 codes are covered."
+
+  d_icd_diagnoses:
+    description: "Dictionary of ICD-9 and ICD-10 diagnosis codes (all codes, not only those used)."
+    columns:
+      icd_code: "ICD code without dots."
+      icd_version: "9 or 10."
+      long_title: "Diagnosis description, e.g. 'Congestive heart failure, unspecified'."
+
+  procedures_icd:
+    description: "Billed procedures per admission (ICD-9 and ICD-10)."
+    columns:
+      subject_id: "Patient ID."
+      hadm_id: "Admission ID."
+      seq_num: "Order of the procedure."
+      chartdate: "Date of the procedure."
+      icd_code: "Procedure code without dots."
+      icd_version: "9 or 10."
+    gotchas:
+      - "JOIN d_icd_procedures ON BOTH icd_code AND icd_version to get long_title."
+
+  d_icd_procedures:
+    description: "Dictionary of ICD-9 and ICD-10 procedure codes."
+    columns:
+      icd_code: "Procedure code."
+      icd_version: "9 or 10."
+      long_title: "Procedure description."
+
+  labevents:
+    description: "Laboratory test results (107,727 rows). One row per measured value."
+    columns:
+      labevent_id: "Row ID."
+      subject_id: "Patient ID."
+      hadm_id: "Admission ID. NULL for outpatient labs drawn outside an admission."
+      specimen_id: "Specimen the test was run on."
+      itemid: "Lab test ID; JOIN d_labitems for its name."
+      charttime: "Time the specimen was taken."
+      value: "Result as text."
+      valuenum: "Numeric result (NULL if not numeric). Use this for averages."
+      valueuom: "Unit, e.g. 'mg/dL', 'mEq/L'."
+      ref_range_lower: "Lower limit of normal."
+      ref_range_upper: "Upper limit of normal."
+      flag: "'abnormal' if outside the reference range, else NULL."
+      priority: "'STAT', 'ROUTINE' or NULL."
+    gotchas:
+      - "Several itemids share a label (e.g. 'Creatinine', 'Glucose', 'Hemoglobin' appear more than once, for different fluids or analyzers). Filter d_labitems on label AND fluid = 'Blood', or use the common itemids: Creatinine 50912, Potassium 50971, Sodium 50983, Glucose 50931, Hemoglobin 51222, White Blood Cells 51301, Platelet Count 51265, Urea Nitrogen 51006, Lactate 50813, % Hemoglobin A1c 50852."
+      - "Count distinct hadm_id/subject_id when asked about patients or admissions, not rows."
+
+  d_labitems:
+    description: "Dictionary of lab tests."
+    columns:
+      itemid: "Lab test ID."
+      label: "Test name, e.g. 'Creatinine'."
+      fluid: "'Blood', 'Urine', 'Other Body Fluid', ..."
+      category: "'Chemistry', 'Hematology', 'Blood Gas', ..."
+
+  prescriptions:
+    description: "Medication orders (18,087 rows). One row per prescribed drug order."
+    columns:
+      subject_id: "Patient ID."
+      hadm_id: "Admission ID."
+      starttime: "Order start."
+      stoptime: "Order stop."
+      drug_type: "'MAIN', 'BASE' (IV base solutions) or 'ADDITIVE'."
+      drug: "Drug name as written, mixed case, e.g. 'Insulin', 'Furosemide', '0.9% Sodium Chloride'. Use ILIKE for matching."
+      dose_val_rx: "Dose amount (text)."
+      dose_unit_rx: "Dose unit."
+      route: "e.g. 'IV', 'PO', 'PO/NG', 'SC', 'IV DRIP', 'IM'."
+    gotchas:
+      - "Many rows per drug per admission (each new order is a row). Count DISTINCT subject_id for 'how many patients received X'."
+
+  microbiologyevents:
+    description: "Microbiology cultures and susceptibility results. One row per specimen x organism x antibiotic tested."
+    columns:
+      subject_id: "Patient ID."
+      hadm_id: "Admission ID (can be NULL)."
+      micro_specimen_id: "Specimen ID."
+      chartdate: "Date of the specimen."
+      spec_type_desc: "Specimen type, e.g. 'URINE', 'BLOOD CULTURE', 'SPUTUM'."
+      test_name: "Test performed."
+      org_name: "Organism grown, e.g. 'ESCHERICHIA COLI'. NULL means no organism recorded (e.g. negative culture)."
+      ab_name: "Antibiotic tested (NULL if no susceptibility test)."
+      interpretation: "'S' sensitive, 'R' resistant, 'I' intermediate, 'P' pending."
+    gotchas:
+      - "Because of the antibiotic rows, one organism in one specimen appears many times. To count organisms, count DISTINCT (micro_specimen_id, org_name) or DISTINCT subject_id."
+
+  chartevents:
+    description: "ICU bedside charted data: vital signs and observations (668,862 rows)."
+    columns:
+      subject_id: "Patient ID."
+      hadm_id: "Admission ID."
+      stay_id: "ICU stay ID."
+      charttime: "Time of the observation."
+      itemid: "Measurement ID; JOIN d_items for its label."
+      value: "Value as text."
+      valuenum: "Numeric value."
+      valueuom: "Unit."
+    gotchas:
+      - "Common itemids: Heart Rate 220045, Respiratory Rate 220210, O2 saturation pulseoxymetry 220277, Non Invasive Blood Pressure systolic 220179 / diastolic 220180 / mean 220181, Arterial Blood Pressure systolic 220050, Temperature Fahrenheit 223761."
+
+  d_items:
+    description: "Dictionary of ICU items used in chartevents, inputevents, outputevents, procedureevents, datetimeevents."
+    columns:
+      itemid: "Item ID."
+      label: "Name, e.g. 'Heart Rate'."
+      abbreviation: "Short name."
+      linksto: "Which events table uses it."
+      category: "Group, e.g. 'Routine Vital Signs'."
+      unitname: "Unit."
+
+  inputevents:
+    description: "ICU fluids and medications given (IV drips, boluses)."
+    columns:
+      subject_id: "Patient ID."
+      stay_id: "ICU stay ID."
+      starttime: "Start."
+      endtime: "End."
+      itemid: "What was given; JOIN d_items."
+      amount: "Amount given."
+      amountuom: "Unit of amount."
+      ordercategoryname: "Category of the order."
+
+  outputevents:
+    description: "ICU outputs, mostly urine."
+    columns:
+      subject_id: "Patient ID."
+      stay_id: "ICU stay ID."
+      charttime: "Time."
+      itemid: "Output type; JOIN d_items."
+      value: "Amount."
+      valueuom: "Unit (usually mL)."
+
+  procedureevents:
+    description: "ICU procedures (lines, ventilation, imaging) with start/end times."
+    columns:
+      subject_id: "Patient ID."
+      stay_id: "ICU stay ID."
+      starttime: "Start."
+      endtime: "End."
+      itemid: "Procedure; JOIN d_items for label (e.g. 'Invasive Ventilation')."
+      value: "Duration or amount."
+      valueuom: "Unit (e.g. 'min')."
+
+  transfers:
+    description: "Every ward/unit movement of a patient during an admission."
+    columns:
+      subject_id: "Patient ID."
+      hadm_id: "Admission ID (NULL for some ED visits)."
+      transfer_id: "Row ID."
+      eventtype: "'admit', 'transfer', 'discharge' or 'ED'."
+      careunit: "Unit name (NULL for discharge rows)."
+      intime: "Entry time."
+      outtime: "Exit time."
+
+  services:
+    description: "Clinical service (team) responsible for the patient, with changes over time."
+    columns:
+      hadm_id: "Admission ID."
+      transfertime: "When the service started."
+      prev_service: "Previous service (NULL for first)."
+      curr_service: "Service code, e.g. 'MED' medicine, 'CMED' cardiology, 'SURG' surgery, 'CSURG' cardiac surgery, 'NSURG' neurosurgery, 'OMED' oncology."
+
+  drgcodes:
+    description: "Diagnosis-related group billing codes."
+    columns:
+      hadm_id: "Admission ID."
+      drg_type: "'HCFA' or 'APR'. Most admissions have one row of EACH type."
+      drg_code: "DRG code."
+      description: "DRG description."
+      drg_severity: "APR only: severity 1-4."
+      drg_mortality: "APR only: risk of mortality 1-4."
+    gotchas:
+      - "Filter on one drg_type (usually 'APR' or 'HCFA'), otherwise admissions are counted twice."
+
+  omr:
+    description: "Outpatient measurements (Online Medical Record): weight, BMI, blood pressure, height."
+    columns:
+      subject_id: "Patient ID."
+      chartdate: "Date."
+      result_name: "e.g. 'Weight (Lbs)', 'BMI (kg/m2)', 'Blood Pressure', 'Height (Inches)'."
+      result_value: "Value as TEXT (cast with TRY_CAST(result_value AS DOUBLE); blood pressure is '120/80')."
+
+  pharmacy:
+    description: "Pharmacy dispensing details for medication orders."
+    columns:
+      pharmacy_id: "Pharmacy order ID (links to prescriptions.pharmacy_id)."
+      medication: "Medication name."
+      route: "Route."
+      frequency: "e.g. 'Q6H'."
+      status: "Order status."
+
+  emar:
+    description: "Electronic medication administration record: each time a medication was given (or not)."
+    columns:
+      subject_id: "Patient ID."
+      hadm_id: "Admission ID."
+      emar_id: "Administration ID."
+      charttime: "Time."
+      medication: "Medication name."
+      event_txt: "What happened, e.g. 'Administered', 'Not Given'."
+
+  emar_detail:
+    description: "Dose details for each emar row (dose given, route, infusion rate)."
+
+  poe:
+    description: "Provider order entry: all orders (medications, labs, radiology, ...)."
+    columns:
+      poe_id: "Order ID."
+      subject_id: "Patient ID."
+      hadm_id: "Admission ID."
+      ordertime: "Order time."
+      order_type: "e.g. 'Medications', 'Lab', 'Radiology', 'Nutrition'."
+      order_status: "'Active' or 'Inactive'."
+
+  poe_detail:
+    description: "Extra name/value fields for some orders."
+
+  hcpcsevents:
+    description: "HCPCS billing events (mostly outpatient-style procedure codes) during admissions."
+  d_hcpcs:
+    description: "Dictionary of HCPCS codes."
+  datetimeevents:
+    description: "ICU date/time observations (e.g. line insertion dates)."
+  ingredientevents:
+    description: "ICU ingredients of inputs (e.g. water, calories)."
+  caregiver:
+    description: "List of ICU caregiver IDs (no other columns)."
+  provider:
+    description: "List of provider IDs (no other columns)."

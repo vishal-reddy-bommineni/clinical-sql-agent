@@ -1,0 +1,2 @@
+# Count SQL in the GitHub language bar (GitHub treats .sql as "data" and hides it by default)
+*.sql linguist-detectable=true linguist-language=SQL

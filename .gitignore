@@ -1,0 +1,10 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+data/mimic_demo.duckdb
+data/*.building
+.streamlit/secrets.toml
+.vscode/
+.DS_Store
+# reports/ (including reports/runs/*/results.jsonl) IS committed: it is the evidence for the README

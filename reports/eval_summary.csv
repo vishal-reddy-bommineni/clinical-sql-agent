@@ -1,0 +1,4 @@
+config,questions,correct,accuracy,ci_low,ci_high,sql_errors,wrong_results,no_sql,avg_llm_calls,avg_sql_attempts,avg_input_tokens,avg_output_tokens,median_seconds
+Baseline: schema only,50,42,0.84,0.7148551903823401,0.9166267863791231,1,7,0,1.0,1.0,2998.42,73.14,4.795346021652222
+Baseline: schema + catalog,50,47,0.94,0.8378265662912299,0.9793854036353695,1,2,0,1.0,1.0,6017.42,69.52,4.9736257791519165
+Agent: tools + self-correction,50,49,0.98,0.8950431352816304,0.9964608319110235,0,1,0,3.74,2.66,9033.96,286.78,17.60614788532257
