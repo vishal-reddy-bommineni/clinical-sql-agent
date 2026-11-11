@@ -8,6 +8,8 @@ benchmark measures how often it is actually right.
 > vs **94%** when the model is given the documented schema in one shot and **84%** with the raw schema
 > only. Most of the gain comes from documenting the data; the agent adds the rest at ~3.7x the model calls.
 
+![The agent answering a question](docs/screenshots/ask.png)
+
 ## Why this project
 Clinicians, managers and analysts constantly need numbers from the EHR ("what's our mortality by
 insurance?", "how many ICU stays involved ventilation?"), and each one usually waits for someone who
@@ -74,6 +76,8 @@ Model: **Gemini 3.5 Flash Lite** (free tier), temperature 0, one run. Full outpu
 raw log of every answer: `reports/runs/gemini-3.5-flash-lite/results.jsonl`.
 
 ![Accuracy by approach](reports/figures/accuracy_by_config.png)
+
+![Evaluation tab](docs/screenshots/evaluation.png)
 
 | Approach | Correct | Accuracy (95% CI) | Easy (12) | Medium (24) | Hard (14) | Model calls / question |
 |---|---|---|---|---|---|---|
